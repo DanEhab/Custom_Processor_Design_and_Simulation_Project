@@ -33,7 +33,8 @@ def build():
 
 def run(path):
     result = subprocess.run([EXE, path, "--delay", "0"], capture_output=True, cwd=ROOT)
-    return result.returncode, result.stdout.decode("utf-8", errors="replace")
+    # Windows writes \r\n line endings to the console
+    return result.returncode, result.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
 def to_signed(bits):
