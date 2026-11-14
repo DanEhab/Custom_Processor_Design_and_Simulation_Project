@@ -3,8 +3,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h>
 #include <stdint.h>
+
+// Sleep(ms) comes from windows.h on Windows; on Linux and macOS it is built from nanosleep.
+#ifdef _WIN32
+#include <windows.h>
+#else
+static void Sleep(unsigned int ms){
+  struct timespec t = { ms / 1000, (long)(ms % 1000) * 1000000L };
+  nanosleep(&t, NULL);
+}
+#endif
+
+// Pause between clock cycles so the pipeline can be watched (set with --delay).
+int cycle_delay_ms = 500;
+
+// Safety limit for programs that loop forever.
+#define MAX_CYCLES 100000
 
 
 //Creating ram: 
@@ -80,10 +95,11 @@ typedef struct {
     int IMM;
     int ADDRESS;
     char* inst;
+    int pc;      // address the instruction was fetched from
 } Data;
 
 Data initD(){
-  Data r = {-1,-1,-1,0,0,0,-1,-1,-1,"00000000000000000000000000000000"};
+  Data r = {-1,-1,-1,0,0,0,-1,-1,-1,"00000000000000000000000000000000",-1};
   return r;
 }
 
@@ -160,20 +176,21 @@ char* read_from_ram_and_convert_to_str(int* row){
   return str;
 }
 
-//2. 
+//2.
 int convert_from_binary_string_to_int(const char* str) {
     int length = strlen(str);
 
     // Convert binary string to unsigned integer
     uint32_t value = (uint32_t)strtoul(str, NULL, 2);
 
-    // If MSB is 1 (i.e., str[0] == '1'), perform manual sign-extension
-    if (str[0] == '1') {
+    // If MSB is 1 (i.e., str[0] == '1'), the value is negative in two's complement
+    if (str[0] == '1' && length < 32) {
         // Two's complement: subtract 2^length
-        return (int)(value - (1U << length)+1);
+        return (int)(value - (1U << length));
     }
 
-    return (int)value;
+    // A full 32-bit pattern is already two's complement
+    return (int)(int32_t)value;
 }
 
 //3.
@@ -363,30 +380,30 @@ int move_immediate(int R1[32], int IMM){
 }
 
 //5. JEQ: (done)
-int jump_if_equal(int R1[32], int R2[32], int IMM){
+// pc is the address of the JEQ itself, so the target is PC + 1 + IMM as in the project description.
+// IMM can be negative, which allows loops that branch backwards.
+int jump_if_equal(int R1[32], int R2[32], int IMM, int pc){
   int tmp1 = read_from_register_and_convert_to_int(R1);
   int tmp2 = read_from_register_and_convert_to_int(R2);
-  int pctmp = read_from_register_and_convert_to_int(PC);
-  int res = 0;
-  if(tmp1 == tmp2 && IMM >=0){
+  int res = -1;  // -1 means the branch is not taken
+  if(tmp1 == tmp2){
     jflag = 1;
-    res = pctmp + IMM;
+    res = pc + 1 + IMM;
   }
-  else{
-    res = -1;
-  }
-  res -=1;
   printf("I am currently checking if the content of Regs%d is equal to the content of Regs%d, jump to immediate address\n",get_register_number(R1),get_register_number(R2));
   printf("Contents of the Registers: \n");
   printf("Reg%d: %d\n",get_register_number(R1),tmp1);
   printf("Reg%d: %d\n",get_register_number(R2),tmp2);
   printf("Immediate Value: %d\n",IMM);
-  write_int_into_register(res,ALU);
-  printf("Now the ALU is: %d\n",res);
   if(jflag == 1){
+    write_int_into_register(res,ALU);
+    printf("Now the ALU is: %d (PC + 1 + IMM = %d + 1 + %d)\n",res,pc,IMM);
     printf("PC before: %d\n",read_from_register_and_convert_to_int(PC));
     write_int_into_register(res,PC);
     printf("PC is updated to ---> %d\n",res);
+  }
+  else{
+    printf("The registers are not equal, so the branch is not taken\n");
   }
   return res;
 
@@ -452,7 +469,7 @@ int jump(int ADDRESS){
 //9. LSL: (done)
 int logical_shift_left(int R1[32], int R2[32], int SHAMT){
     int tmp2 = read_from_register_and_convert_to_int(R2);
-    int res = tmp2 << SHAMT;
+    int res = (int)((unsigned int)tmp2 << SHAMT);  // shift as unsigned: shifting a negative int is undefined in C
 
     printf("I am currently logically shifting Left the content of Regs%d with shift amount of %d which will be saved later in Regs%d\n",get_register_number(R2),SHAMT,get_register_number(R1));
     printf("Contents of the Registers: \n");
@@ -510,8 +527,9 @@ void init(){
 
 void finalprinter(){
   printf(" \n");
-  printf(" \n");
-  printf(" \n");
+  printf("=====================================\n");
+  printf("Final state after %d clock cycles\n",clk_cycle);
+  printf("=====================================\n");
   printf("Reg0: %d\n",read_from_register_and_convert_to_int((int*)R0));
   for (int i=1;i<=31;i++){
     printf("Reg%d: %d\n",i,read_from_register_and_convert_to_int(get_register_by_number(i)));
@@ -525,10 +543,11 @@ void finalprinter(){
   }
 }
 
-//fetch code: 
-void fetch(){
+//fetch code: (returns the address it fetched from)
+int fetch(){
   printf("I am Currently Fetching 🔍\n");
   int line = read_from_register_and_convert_to_int(PC);
+  int address = line;
   printf("PC: %d\n",line);
   int z = read_from_ram_and_convert_to_int(ram[line]);
   char* x = read_from_ram_and_convert_to_str(ram[line]);
@@ -537,7 +556,8 @@ void fetch(){
   line++;
   write_int_into_register(line,PC);
   printf("-------------------------------------\n");
-} 
+  return address;
+}
 
 Data decode(){
   printf("I am currently Decoding 👨🏿‍💻, (instruction: %s = %d)\n",read_from_ram_and_convert_to_str(IR),read_from_register_and_convert_to_int(IR));
@@ -667,7 +687,7 @@ Data execute(Data* d){
           d->sig = z;
           break; 
         case 4:
-          z = jump_if_equal(get_register_by_number(d->R1),get_register_by_number(d->R2),d->IMM);
+          z = jump_if_equal(get_register_by_number(d->R1),get_register_by_number(d->R2),d->IMM,d->pc);
           d->exec = read_from_register_and_convert_to_int(PC);
           d->sig = z;
           break; 
@@ -716,18 +736,12 @@ Data execute(Data* d){
 
 Data Memory(Data* d){
   printf("I am Currently in the memory phase 📝 (instruction: %s)\n",d->inst);
-  if(jflag==1){
-    while(isEmpty(&decode_stage)==0){
-      dequeue(&decode_stage);
-    }
-    while(isEmpty(&exec_stage)==0){
-      dequeue(&exec_stage);
-    }
-    jflag = 0;
-  }
-  
 
-  if(d->opcode == 10){
+  if((d->opcode == 10 || d->opcode == 11) && (d->exec < 0 || d->exec > 2047)){
+    printf("Ram[%d] does not exist (addresses are 0 to 2047), so the memory is not accessed ⚠️\n",d->exec);
+    if(d->opcode == 10) d->exec = 0;
+  }
+  else if(d->opcode == 10){
      printf("I have now accessed Ram[%d]\n",d->exec);
      int z = read_from_ram_and_convert_to_int(ram[d->exec]);
      d->exec = z;
@@ -735,66 +749,54 @@ Data Memory(Data* d){
   else if(d->opcode == 11){
     printf("I have now accessed Ram[%d]\n",d->exec);
     printf("I have now inserted the value of %d into that memory place\n",d->sig);
-    write_int_into_register(d->sig,ram[d->exec]) ;   
+    write_int_into_register(d->sig,ram[d->exec]) ;
     printf("We are now done with instruction %s\n",d->inst);
   }
   else{
     printf("This instruction doesn't want to access the RAM 🤷‍♂️\n");
   }
-  return *d;
   printf("-------------------------------------\n");
+  return *d;
 }
 
 
 void write_back(Data* d){
   printf("I am currently in the write-back phase ⬅️ (instruction: %s)\n",d->inst);
-  if(d->R1 == 0){
-    printf("Sorry...I cant put smth in Reg0\n");
-  }
-  else{
   switch(d->opcode){
     case 0:
-    case 1: 
-    case 2: 
-    case 3: 
+    case 1:
+    case 2:
+    case 3:
     case 5:
     case 6:
     case 8:
     case 9:
-    case 10: 
+    case 10:
+      if(d->sig == 0){
+        printf("Sorry...I cant put smth in Reg0 (it stays 0)\n");
+        break;
+      }
       printf("The register that is being modified is Regs%d \n",d->sig);
       printf("Regs%d before: %d\n",d->sig,read_from_register_and_convert_to_int(get_register_by_number(d->sig)));
       write_int_into_register(d->exec,get_register_by_number(d->sig));
       printf("Regs%d after: %d\n",d->sig,d->exec);
       break;
     case 4:
-      if(d->sig == -3){
+      if(d->sig == -1){
         printf("No jumping... PC will not be modified\n");
-        break;
       }
       else{
         printf("The PC was already Jumped in the execute stage \n");
-        /*printf("The register that is being modified is the PC\n");
-        printf("PC before: %d\n",read_from_register_and_convert_to_int(PC));
-        write_int_into_register(d->exec,PC);
-        printf("PC after: %d\n",d->exec);*/
-        jflag = 0;
-        break;
       }
-    case 7: 
+      break;
+    case 7:
       printf("The PC was already Jumped in the execute stage \n");
-      /*printf("The register that is being modified is the PC\n");
-      printf("PC before: %d\n",read_from_register_and_convert_to_int(PC));
-      write_int_into_register(d->exec,PC);
-      printf("PC after: %d\n",d->exec);*/
-      jflag = 0;
       break;
     case 11:
       printf("This instruction was already finished from the memory phase\n");
       break;
-    default: 
+    default:
       printf("I dont seem to understand this instruction 🤔...Ohh its not in my ISA\n");
-  }
   }
   printf("We are now done with instruction %s 🥳\n",d->inst);
   printf("-------------------------------------\n");
@@ -803,79 +805,100 @@ void write_back(Data* d){
 }
 
     
+// Address of the instruction waiting in a stage queue, or -1 if the queue is empty.
+int peek_pc(QUEUE* q){
+  return isEmpty(q) ? -1 : q->front->data.pc;
+}
+
+void print_stage(const char* name, int pc){
+  if(pc < 0) printf(" %s: -  ",name);
+  else printf(" %s: inst %d  ",name,pc);
+}
+
+/* The pipeline follows the timing in the project description:
+   - odd cycles:  IF and WB (an instruction fetched now is decoded in the next cycle)
+   - even cycles: ID, EX and MEM (so IF and MEM never use the memory at the same time)
+   Each instruction spends 2 cycles in ID, 2 in EX, 1 in MEM and 1 in WB, so a program of
+   n instructions without jumps takes 7 + (n - 1) * 2 cycles.
+   The queues are the pipeline registers between the stages. On an even cycle the stages run
+   from MEM back to ID, so every instruction moves forward exactly one stage per cycle. */
 int imain(int ic){
-  int fc = 0;
-  int dc = 0;
-  int ec = 0;
-  int mc = 0;
-  int wc = 0;
-  int lc = 7 + ((ic - 1) * 2);
   init_queue(&fetch_stage);
   init_queue(&decode_stage);
   init_queue(&exec_stage);
   init_queue(&mem_stage);
   init_queue(&WB_stage);
-  //init();
-  /*write_int_into_register(537149441,IR);
-  write_int_into_register(50,R1);
-  write_int_into_register(10,R2);
-  write_int_into_register(-50,R4);*/
-  write_int_into_register(5,R1);
-  write_int_into_register(5,R2);
-  //write_int_into_register(-50,R4);
 
-
-  for(int i=0;i<lc+1024;i++){
+  while(1){
     int value_inside_pc = read_from_register_and_convert_to_int(PC);
-    int current_inst = read_from_ram_and_convert_to_int(ram[value_inside_pc]);
-    if(isEmpty(&decode_stage)==1 && isEmpty(&exec_stage)==1 && isEmpty(&mem_stage)==1 && current_inst==0 && fc==0){
+    // There is something left to fetch while the PC points inside the loaded program.
+    int can_fetch = (value_inside_pc >= 0 && value_inside_pc < ic);
+    if(!can_fetch && isEmpty(&fetch_stage) && isEmpty(&decode_stage) && isEmpty(&exec_stage) && isEmpty(&mem_stage)){
+      break;
+    }
+    if(clk_cycle >= MAX_CYCLES){
+      printf("\nStopped after %d clock cycles: the program seems to loop forever ⚠️\n",clk_cycle);
       break;
     }
       clk_cycle ++;
       printf(" \n");
-      
+
       printf("Cycle Num: %d\n",clk_cycle);
-    
+
+    int wb_pc = -1;
     if(clk_cycle % 2 != 0){
-      if(current_inst != 0){ 
-        fetch();
-        fc++;
-      }
       if(isEmpty(&mem_stage)==0){
         Data pp = dequeue(&mem_stage);
+        wb_pc = pp.pc;
         write_back(&pp);
-        wc++;
+      }
+      if(can_fetch){
+        Data f = initD();
+        f.pc = fetch();
+        enqueue(&fetch_stage,f);
       }
 
     }
     else{
-        enqueue(&decode_stage,decode());
-        fc--;
-        dc++;
-
-      if(clk_cycle>2){
-        if(isEmpty(&decode_stage)==0){
-          Data ee = dequeue(&decode_stage);
-          Data ff = execute(&ee);
-          enqueue(&exec_stage,ff);
-          ec++;
-        }
-        if(clk_cycle>4){
-          if(isEmpty(&exec_stage)==0 ){
-            Data mm = dequeue(&exec_stage);
-            Data m = Memory(&mm);
-            enqueue(&mem_stage,m);
-            mc++;
+      if(isEmpty(&exec_stage)==0){
+        Data mm = dequeue(&exec_stage);
+        Data m = Memory(&mm);
+        enqueue(&mem_stage,m);
+      }
+      if(isEmpty(&decode_stage)==0){
+        Data ee = dequeue(&decode_stage);
+        Data ff = execute(&ee);
+        enqueue(&exec_stage,ff);
+        if(jflag == 1){
+          // The jump was taken: the instruction fetched after it is on the wrong path.
+          while(isEmpty(&fetch_stage)==0){
+            Data flushed = dequeue(&fetch_stage);
+            printf("Flushing inst %d, which was fetched before the jump was taken 🚿\n",flushed.pc);
           }
+          jflag = 0;
         }
       }
-
-
+      if(isEmpty(&fetch_stage)==0){
+        Data f = dequeue(&fetch_stage);
+        Data d = decode();
+        d.pc = f.pc;
+        enqueue(&decode_stage,d);
+      }
     }
-  fflush(stdout);  
-  Sleep(500);  // Pause for 1 second
+
+    printf("Pipeline |");
+    print_stage("IF", clk_cycle % 2 != 0 ? peek_pc(&fetch_stage) : -1);
+    print_stage("ID", peek_pc(&decode_stage));
+    print_stage("EX", peek_pc(&exec_stage));
+    print_stage("MEM", clk_cycle % 2 == 0 ? peek_pc(&mem_stage) : -1);
+    print_stage("WB", wb_pc);
+    printf("\n");
+
+  fflush(stdout);
+  if(cycle_delay_ms > 0) Sleep(cycle_delay_ms);
 
   }
+  printf("\nProgram finished in %d clock cycles\n",clk_cycle);
   finalprinter();
 
   return 0;
