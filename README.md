@@ -9,6 +9,7 @@
 ![Course](https://img.shields.io/badge/Course-Computer%20System%20Architecture-1f6feb)
 ![Semester](https://img.shields.io/badge/Semester-Spring%202025-8957e5)
 ![Platforms](https://img.shields.io/badge/Runs%20on-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-555)
+![Grade](https://img.shields.io/badge/Course%20grade-A%2B-success)
 
 </div>
 
@@ -140,8 +141,6 @@ The project description and the extra remarks from the course are in [`docs/`](d
 
 ---
 
-## Team & course
+## Author & course
 
-Built for **Computer System Architecture (CSEN 601 / CSEN B501)** at the German International University in Berlin, Spring 2025, during a semester abroad from the German University in Cairo.
-
-**Team 1:** Daniel Ehab · Yusuf Atif · Amer Bashar · Daniel Hennawi · Ahmed Kirat · Youssef Elsayed
+Designed and written entirely by **Daniel Ehab**, and submitted as the project of Team 1 for **Computer System Architecture (CSEN 601 / CSEN B501)** at the German International University in Berlin, Spring 2025, during a semester abroad from the German University in Cairo.
