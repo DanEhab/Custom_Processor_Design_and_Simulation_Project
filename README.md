@@ -4,7 +4,7 @@
 
 **A cycle-by-cycle simulator, written in C, of a 32-bit processor with its own 12-instruction ISA, a Von Neumann memory and a 5-stage pipeline. It reads an assembly program, encodes it into machine code in memory, and runs it while printing every stage of every clock cycle.**
 
-[![CI](https://github.com/DanEhab/Custom_Processor_Design_and_Simulation_Project/actions/workflows/ci.yml/badge.svg)](https://github.com/DanEhab/Custom_Processor_Design_and_Simulation_Project/actions/workflows/ci.yml)
+[![CI](https://github.com/DanEhab/custom-processor-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/DanEhab/custom-processor-simulator/actions/workflows/ci.yml)
 ![Language](https://img.shields.io/badge/Language-C-00599c?logo=c&logoColor=white)
 ![Course](https://img.shields.io/badge/Course-Computer%20System%20Architecture-1f6feb)
 ![Semester](https://img.shields.io/badge/Semester-Spring%202025-8957e5)
